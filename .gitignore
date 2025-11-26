@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.env
+.venv
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Configuration
+config/config.yaml
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+# CogniOrch temp artifacts (created under system temp dir; kept here for safety)
+cogniorch_command_output.txt
+cogniorch_terminal_pid.txt
+cogniorch_command_lock
+cogniorch_terminal_fifo
+cogniorch_command.log
+
+# System
+.DS_Store
+Thumbs.db

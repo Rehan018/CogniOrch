@@ -1,0 +1,70 @@
+# Agent Configuration
+
+# Enable/Disable Features
+use_cot: true              # Chain of Thought reasoning
+use_react: true            # ReAct pattern
+use_planning: true         # Hierarchical planning
+use_rag: true              # RAG for context retrieval
+use_multi_agent: true      # Multi-agent collaboration
+
+# Chain of Thought Settings
+cot:
+  verbose: true
+  max_steps: 10
+  show_reasoning: true
+
+# ReAct Settings
+react:
+  verbose: true
+  max_iterations: 10
+  enable_tool_calling: true
+
+# Planner Settings
+planner:
+  max_plan_steps: 15
+  enable_refinement: true
+  complexity_threshold: "medium"
+
+# State Management
+state:
+  max_history_entries: 100
+  auto_save: true
+  save_interval: 60  # seconds
+
+# RAG Settings
+rag:
+  enabled: true
+  max_context_entries: 5
+  similarity_threshold: 0.7
+  storage_path: "~/.cogniorch/knowledge_base.json"
+
+# Tool Registry
+tools:
+  file_operations: true
+  system_info: true
+  process_management: true
+  network: true
+  package_management: true
+  development: true
+
+# Safety Settings
+safety:
+  enable_verification: true
+  dangerous_command_patterns:
+    - "rm -rf /"
+    - "mkfs"
+    - "dd if="
+  require_approval: true
+  auto_approve_safe_commands: false
+
+# Performance
+performance:
+  max_concurrent_agents: 3
+  timeout_seconds: 300
+  enable_caching: true
+
+# Logging
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  log_to_file: true
+  log_file: "~/.cogniorch/cogniorch.log"
