@@ -27,27 +27,46 @@ class TerminalInterface:
                     print("\033[1;33mDisplaying conversation history\033[0m")
                     self.display_history()
                 else:
-                    # Initial query
-                    response = self.ai_terminal.query(user_input)
-
-                    # If user denied approval, avoid agentic retries to prevent escalation attempts
-                    if isinstance(response, str) and 'denied' in response.lower():
-                        response = None
-                    
-                    # Agentic Loop: If response is not None, it means a command was executed and we have output
+                    # Start agentic loop (auto-detects simple vs planning mode)
+                    current_prompt = user_input
                     loop_count = 0
                     max_loops = 5
                     
-                    while response and loop_count < max_loops:
-                        # Feed the output back to the AI
-                        # print(f"\n\033[1;30m[Debug] Feeding output back to AI (Loop {loop_count+1})\033[0m")
+                    while loop_count < max_loops:
+                        # Query AI with current prompt
+                        execution_result = self.ai_terminal.query(current_prompt)
                         
-                        # We treat the command output as a system/user message to the AI
-                        response = self.ai_terminal.query(f"System Output:\n{response}")
+                        # If no execution result, AI is done (no command in response)
+                        if not execution_result:
+                            break
+                        
+                        # Check if this was a planning mode execution (multi-step)
+                        if "plan_results" in execution_result:
+                            # Planning mode handled everything, we're done
+                            break
+                        
+                        # Check if user denied the command
+                        if not execution_result.get("approved", True):
+                            print("\n\033[1;33m[System] Command denied by user. Stopping.\033[0m")
+                            break
+                        
+                        # Check if execution failed
+                        if not execution_result.get("executed", False):
+                            print("\n\033[1;31m[System] Command execution failed.\033[0m")
+                            # Feed the error back to AI
+                            error_msg = execution_result.get("error", "Unknown error")
+                            current_prompt = f"The command failed with error: {error_msg}\n\nPlease try a different approach or report the issue to the user."
+                            loop_count += 1
+                            continue
+                        
+                        # Feed REAL output back to AI for analysis
+                        feedback = execution_result.get("feedback", "")
+                        current_prompt = feedback
+                        
                         loop_count += 1
-                        
+                    
                     if loop_count >= max_loops:
-                        print("\n\033[1;33m[System] Max automatic steps reached.\033[0m")
+                        print("\n\033[1;33m[System] Maximum automatic steps reached.\033[0m")
             except KeyboardInterrupt:
                 print("\n\033[1;31mInterrupted. Goodbye!\033[0m")
                 break

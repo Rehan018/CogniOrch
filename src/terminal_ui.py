@@ -201,7 +201,49 @@ class ImprovedTerminalUI:
                 else:
                     print_formatted_text(HTML('<output>Thinking...</output>'), style=COGNIORCH_STYLE, end='\r')
 
-                    self.cogniorch_ai.query(user_input, clear_thinking=True)
+                    # Start agentic loop (auto-detects simple vs planning mode)
+                    current_prompt = user_input
+                    loop_count = 0
+                    max_loops = 5
+                    
+                    while loop_count < max_loops:
+                        # Query AI with current prompt
+                        execution_result = self.cogniorch_ai.query(current_prompt, clear_thinking=True)
+                        
+                        # If no execution result, AI is done (no command in response)
+                        if not execution_result:
+                            break
+                        
+                        # Check if this was a planning mode execution (multi-step)
+                        if "plan_results" in execution_result:
+                            # Planning mode handled everything, we're done
+                            break
+                        
+                        # Check if user denied the command
+                        if not execution_result.get("approved", True):
+                            print_formatted_text(HTML('<ansiyellow>[System] Command denied by user. Stopping.</ansiyellow>'), 
+                                               style=COGNIORCH_STYLE)
+                            break
+                        
+                        # Check if execution failed
+                        if not execution_result.get("executed", False):
+                            print_formatted_text(HTML('<ansired>[System] Command execution failed.</ansired>'), 
+                                               style=COGNIORCH_STYLE)
+                            # Feed the error back to AI
+                            error_msg = execution_result.get("error", "Unknown error")
+                            current_prompt = f"The command failed with error: {error_msg}\n\nPlease try a different approach or report the issue to the user."
+                            loop_count += 1
+                            continue
+                        
+                        # Feed REAL output back to AI for analysis
+                        feedback = execution_result.get("feedback", "")
+                        current_prompt = feedback
+                        
+                        loop_count += 1
+                    
+                    if loop_count >= max_loops:
+                        print_formatted_text(HTML('<ansiyellow>[System] Maximum automatic steps reached.</ansiyellow>'), 
+                                           style=COGNIORCH_STYLE)
 
             except KeyboardInterrupt:
                 print_formatted_text(HTML('\n<ansired>Interrupted. Type "exit" to quit.</ansired>'), style=COGNIORCH_STYLE)

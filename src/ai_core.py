@@ -115,41 +115,72 @@ class CogniOrchAI:
 
         system_instructions = """
 SYSTEM INSTRUCTIONS - FOLLOW STRICTLY:
-You are CogniOrch, an advanced AI terminal assistant with agentic capabilities.
+You are CogniOrch, an advanced AI terminal assistant with TRUE agentic capabilities.
 
-COMMAND EXECUTION:
-- Wrap commands in <mcp:terminal>command</mcp:terminal> tags
-- For system updates, use the correct package manager (apt/dnf/pacman) based on OS info
-- You can execute multiple commands in sequence to solve complex problems
+CRITICAL COMMAND EXECUTION RULES:
+1. Wrap commands ONLY in <mcp:terminal>command</mcp:terminal> tags
+2. Output EXACTLY ONE command per response
+3. After writing a command tag, STOP your response immediately
+4. NEVER generate fake command results or "Result:" lines
+5. You will receive ACTUAL command output in the next turn
+6. Wait for real output before continuing
 
-AGENTIC BEHAVIOR:
-- When you execute a command, you'll receive the output
-- Analyze the output to determine if your goal was achieved
-- If there's an error, identify the problem and try a different approach
-- Continue until the task is completed or you determine it's impossible
-- Show your reasoning process step by step
+AGENTIC WORKFLOW (Step-by-Step):
 
-CRITICAL RULES:
-1. After receiving command output, ALWAYS analyze it for errors
-2. If you see an error, diagnose it and try to fix it
-3. Be proactive - if something fails, try alternative solutions
-4. Keep track of what you've tried to avoid loops
-5. After successful completion, provide a clear summary
+Step 1: User makes a request
+Step 2: You output ONE command tag and STOP
+Step 3: System executes the command (you wait)
+Step 4: You receive ACTUAL output
+Step 5: You analyze the REAL output
+Step 6: Based on results, either:
+   - Output next command (return to Step 2)
+   - Report success/failure to user
 
-EXAMPLES OF AGENTIC BEHAVIOR:
+CORRECT BEHAVIOR EXAMPLE:
 
+Turn 1:
 User: "install htop"
-You: <mcp:terminal>sudo apt install htop</mcp:terminal>
-[If error: "E: Unable to locate package htop"]
-You: I see apt couldn't find htop. Let me update the package list first.
-<mcp:terminal>sudo apt update</mcp:terminal>
-[After update succeeds]
-You: Now let me try installing htop again.
-<mcp:terminal>sudo apt install htop -y</mcp:terminal>
-[After success]
-You: Successfully installed htop. It's now available on your system.
+You: Let me check if htop is installed.
+<mcp:terminal>which htop</mcp:terminal>
+[STOP HERE - DO NOT CONTINUE]
 
-Remember: Be proactive, self-correcting, and persistent.
+Turn 2:
+System: "Command output: /usr/bin/which: no htop in (/usr/local/bin:/usr/bin)"
+You: htop is not installed. Let me install it.
+<mcp:terminal>sudo apt install htop -y</mcp:terminal>
+[STOP HERE]
+
+Turn 3:
+System: "Command output: Reading package lists... E: Unable to locate package htop"
+You: The package wasn't found. I need to update the package list first.
+<mcp:terminal>sudo apt update</mcp:terminal>
+[STOP HERE]
+
+Turn 4:
+System: "Command output: Hit:1 http://archive... Fetched 228 kB... Reading package lists... Done"
+You: Package list updated. Now installing htop.
+<mcp:terminal>sudo apt install htop -y</mcp:terminal>
+[STOP HERE]
+
+Turn 5:
+System: "Command output: Reading package lists... Setting up htop..."
+You: Successfully installed htop! It's now available on your system.
+
+FORBIDDEN BEHAVIORS:
+❌ DO NOT write: "Result: command output here"
+❌ DO NOT write: "[Output shows...]"
+❌ DO NOT write: "The command returned..."
+❌ DO NOT generate multiple commands in one response
+❌ DO NOT pretend you have output you don't have
+
+ALLOWED BEHAVIORS:
+✓ Brief explanation before command
+✓ ONE command tag per response
+✓ Analyze ACTUAL output you receive
+✓ Continue based on REAL results
+✓ Ask clarifying questions if needed
+
+Remember: You are a REAL agent that executes commands and receives REAL output. Never fake results.
 """
         full_context = f"{system_instructions}\n\n{context_data}\n\n{initial_context}</context>"
         self.context_initialized = True
@@ -284,34 +315,44 @@ Remember: Be proactive, self-correcting, and persistent.
                 break
 
         return "Sorry, I couldn't get a response. Please try again."
+    
+    def _extract_first_command(self, response_text):
+        """
+        Extract the first MCP command from the response.
+        Returns: (command, protocol) or (None, None)
+        """
+        # Match <mcp:protocol>command</mcp:protocol> tags
+        pattern = r'<mcp:(\w+)>(.*?)</mcp:\1>'
+        match = re.search(pattern, response_text, re.DOTALL)
+        
+        if match:
+            protocol = match.group(1)
+            command = match.group(2).strip()
+            return command, protocol
+        
+        return None, None
 
     def query(self, prompt, clear_thinking=False):
         """
-        Main query method with agentic loop.
+        Main query method with intelligent routing.
+        Routes to simple loop for single commands or full planning for complex tasks.
         """
         try:
             if not self.context_initialized:
                 context = self.initialize_context()
                 prompt = f"{context}\n\n{prompt}"
 
-            self.history.append({"role": "user", "content": prompt})
-
-            # Get AI response
-            if self.mode == 'digital_ocean':
-                response = self._query_digitalocean(prompt, clear_thinking)
+            # Analyze task complexity
+            complexity = self._assess_task_complexity(prompt)
+            
+            if complexity == "high" and self.use_agentic_mode:
+                # Use full planning/CoT/ReAct system
+                logger.info("Using full agentic planning mode")
+                return self._query_with_planning(prompt, clear_thinking)
             else:
-                response = self._query_lm_studio(prompt, clear_thinking)
-            
-            if not response:
-                return None
-            
-            # Add AI response to history
-            self.history.append({"role": "assistant", "content": response})
-            
-            # Process commands in response
-            execution_result = self._process_response_with_monitoring(response)
-            
-            return execution_result
+                # Use simple agentic loop (fast for single commands)
+                logger.info("Using simple agentic loop")
+                return self._query_simple(prompt, clear_thinking)
             
         except Exception as e:
             import traceback
@@ -319,6 +360,281 @@ Remember: Be proactive, self-correcting, and persistent.
             print(f"Details: {e}")
             print(traceback.format_exc())
             return None
+    
+    def _assess_task_complexity(self, prompt):
+        """
+        Assess if a task needs full planning or simple execution.
+        Returns: "low", "medium", or "high"
+        """
+        prompt_lower = prompt.lower()
+        
+        # High complexity indicators - needs planning
+        high_indicators = [
+            "install and configure",
+            "setup",
+            "deploy",
+            "create a project",
+            "build and test",
+            "analyze and fix",
+            "multiple steps",
+            "then",
+            "after that",
+            "debug",
+            "troubleshoot"
+        ]
+        
+        # Low complexity - simple command
+        low_indicators = [
+            "what is",
+            "show me",
+            "list",
+            "display",
+            "check if",
+            "tell me"
+        ]
+        
+        if any(ind in prompt_lower for ind in high_indicators):
+            return "high"
+        elif any(ind in prompt_lower for ind in low_indicators):
+            return "low"
+        else:
+            return "medium"
+    
+    def _query_simple(self, prompt, clear_thinking=False):
+        """
+        Simple agentic loop for straightforward tasks.
+        Same as before - fast execution.
+        """
+        self.history.append({"role": "user", "content": prompt})
+
+        # Get AI response
+        if self.mode == 'digital_ocean':
+            response = self._query_digitalocean(prompt, clear_thinking)
+        else:
+            response = self._query_lm_studio(prompt, clear_thinking)
+        
+        if not response:
+            return None
+        
+        # Add AI response to history
+        self.history.append({"role": "assistant", "content": response})
+        
+        # Check if response contains a command
+        command, protocol = self._extract_first_command(response)
+        
+        if command and protocol:
+            # Execute the command and return output for feedback loop
+            if protocol == "terminal":
+                if self.use_agentic_mode:
+                    result = self.executor_agent.process(
+                        {"command": command, "reason": "User request"},
+                        {}
+                    )
+                else:
+                    results = mcp.process_response(
+                        f"<mcp:terminal>{command}</mcp:terminal>",
+                        require_approval=self.require_approval,
+                        auto_approve=self.auto_approve_all
+                    )
+                    result = results.get("terminal", {})
+                
+                # Store successful executions
+                if result.get("success") and result.get("executed"):
+                    knowledge_base.add_command_execution(
+                        command=command,
+                        output=result.get("output", ""),
+                        success=True
+                    )
+                
+                return self._format_execution_feedback(result)
+            else:
+                # Other protocols
+                results = mcp.process_response(
+                    f"<mcp:{protocol}>{command}</mcp:{protocol}>",
+                    require_approval=self.require_approval,
+                    auto_approve=self.auto_approve_all
+                )
+                result = results.get(protocol, {})
+                return self._format_execution_feedback(result)
+        
+        return None
+    
+    def _query_with_planning(self, prompt, clear_thinking=False):
+        """
+        Full agentic mode with visible CoT reasoning and planning.
+        Shows reasoning steps, creates plan, executes with feedback.
+        """
+        print("\n" + "="*60)
+        print("🧠 AGENTIC PLANNING MODE ACTIVATED")
+        print("="*60)
+        
+        # Step 1: Chain of Thought Reasoning
+        print("\n💭 Chain of Thought Reasoning:")
+        cot_prompt = f"""Analyze this task and provide step-by-step reasoning:
+
+Task: {prompt}
+
+Provide your reasoning in this format:
+1. Understand: [What is the user asking for?]
+2. Requirements: [What do we need to accomplish this?]
+3. Approach: [How should we do it?]
+4. Steps: [What are the main steps?]
+5. Considerations: [Any risks or special considerations?]
+
+Be concise and focused."""
+        
+        self.history.append({"role": "user", "content": cot_prompt})
+        
+        if self.mode == 'digital_ocean':
+            cot_response = self._query_digitalocean(cot_prompt, clear_thinking=False)
+        else:
+            cot_response = self._query_lm_studio(cot_prompt, clear_thinking=False)
+        
+        if cot_response:
+            self.history.append({"role": "assistant", "content": cot_response})
+            print("")  # New line after CoT
+        
+        # Step 2: Create Execution Plan
+        print("\n📋 Creating Execution Plan:")
+        plan_prompt = f"""Based on the reasoning above, create a step-by-step execution plan.
+
+List ONLY the commands to execute, one per line, in order.
+Format each as: <mcp:terminal>command</mcp:terminal>
+
+Do NOT include explanations, just the commands."""
+        
+        self.history.append({"role": "user", "content": plan_prompt})
+        
+        if self.mode == 'digital_ocean':
+            plan_response = self._query_digitalocean(plan_prompt, clear_thinking=False)
+        else:
+            plan_response = self._query_lm_studio(plan_prompt, clear_thinking=False)
+        
+        if not plan_response:
+            print("❌ Failed to create execution plan")
+            return None
+        
+        self.history.append({"role": "assistant", "content": plan_response})
+        
+        # Extract all commands from plan
+        commands = self._extract_commands(plan_response)
+        
+        if not commands:
+            print("No commands found in plan")
+            return None
+        
+        print(f"\n✓ Plan created with {len(commands)} steps")
+        
+        # Step 3: Execute Plan Step-by-Step
+        print("\n⚡ Executing Plan:\n")
+        
+        execution_results = []
+        for i, command in enumerate(commands, 1):
+            print(f"Step {i}/{len(commands)}: {command}")
+            
+            # Execute command
+            if self.use_agentic_mode:
+                result = self.executor_agent.process(
+                    {"command": command, "reason": f"Plan step {i}"},
+                    {}
+                )
+            else:
+                results = mcp.process_response(
+                    f"<mcp:terminal>{command}</mcp:terminal>",
+                    require_approval=self.require_approval,
+                    auto_approve=self.auto_approve_all
+                )
+                result = results.get("terminal", {})
+            
+            execution_results.append({
+                "step": i,
+                "command": command,
+                "result": result
+            })
+            
+            # Check if user denied
+            if not result.get("approved", True):
+                print(f"\n❌ Step {i} denied by user. Stopping plan execution.")
+                break
+            
+            # Check if execution failed
+            if not result.get("executed"):
+                print(f"\n❌ Step {i} failed to execute.")
+                break
+            
+            # Show if there was an error
+            if not result.get("success", True):
+                print(f"⚠️  Step {i} completed with errors")
+            else:
+                print(f"✓ Step {i} completed successfully")
+            
+            # Store successful executions
+            if result.get("success") and result.get("executed"):
+                knowledge_base.add_command_execution(
+                    command=command,
+                    output=result.get("output", ""),
+                    success=True
+                )
+        
+        # Step 4: Summary
+        print("\n" + "="*60)
+        success_count = sum(1 for r in execution_results if r["result"].get("success"))
+        print(f"📊 Plan Execution Complete: {success_count}/{len(execution_results)} steps successful")
+        print("="*60 + "\n")
+        
+        # Return summary for terminal interface
+        return {
+            "feedback": f"Plan executed: {success_count}/{len(execution_results)} steps successful",
+            "approved": True,
+            "executed": True,
+            "success": success_count == len(execution_results),
+            "plan_results": execution_results
+        }
+    
+    def _format_execution_feedback(self, result):
+        """
+        Format execution result for feedback to AI.
+        """
+        if not result.get("approved", True):
+            # User denied - return clear message
+            return {
+                "feedback": "Command execution was denied by user.",
+                "approved": False,
+                "executed": False
+            }
+        
+        if not result.get("executed"):
+            # Execution failed
+            error_msg = result.get("error", "Unknown error")
+            return {
+                "feedback": f"Command execution failed: {error_msg}",
+                "approved": True,
+                "executed": False,
+                "error": error_msg
+            }
+        
+        # Command executed successfully
+        output = result.get("output", "").strip()
+        
+        # Truncate very long output
+        if len(output) > 2000:
+            output = output[:2000] + "\n... [Output Truncated]"
+        
+        # Check for errors in output
+        has_error = not result.get("success", True)
+        
+        if has_error:
+            feedback = f"Command output (contains errors):\n{output}"
+        else:
+            feedback = f"Command output:\n{output}"
+        
+        return {
+            "feedback": feedback,
+            "approved": True,
+            "executed": True,
+            "success": result.get("success", True),
+            "output": output
+        }
 
     def _process_response_with_monitoring(self, response):
         """
