@@ -35,9 +35,11 @@ def load_persistent_memory():
                 with open("/etc/os-release", "r") as os_file:
                     for line in os_file:
                         if line.startswith("PRETTY_NAME="):
-                            distro_info += f"Distribution: {line.split('=')[1].strip().strip('\"')}\n"
+                            pretty_value = line.split('=')[1].strip().strip('"')
+                            distro_info += f"Distribution: {pretty_value}\n"
                         elif line.startswith("ID="):
-                            distro_info += f"Distro ID: {line.split('=')[1].strip().strip('\"')}\n"
+                            distro_value = line.split('=')[1].strip().strip('"')
+                distro_info += f"Distro ID: {distro_value}\n"
             
             if distro_info:
                 with open(memory_file, "a") as f:

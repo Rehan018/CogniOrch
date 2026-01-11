@@ -34,7 +34,7 @@ logger = logging.getLogger("cogniorch.ai_core")
 
 class CogniOrchAI:
     def __init__(self, config):
-        self.mode = config.get('mode', 'lm_studio')
+        self.mode = config.get('mode', 'ollama')
         logger.info(f"Initializing CogniOrchAI in {self.mode} mode.")
         self.require_approval = config.get('command_approval', {}).get('require_approval', True)
         self.auto_approve_all = config.get('command_approval', {}).get('auto_approve_all', False)
@@ -56,7 +56,7 @@ class CogniOrchAI:
             openai.api_key = config['api_key']
             self.model = config['model']
 
-        self.lm_studio_config = config.get('lm_studio_config', {})
+        self.ollama_config = config.get('ollama_config', {})
         self.history = []
         self.context_initialized = False
         
@@ -186,42 +186,88 @@ Remember: You are a REAL agent that executes commands and receives REAL output. 
         self.context_initialized = True
         return full_context
 
-    def _query_lm_studio(self, prompt, clear_thinking=False):
-        instruction = f"{self.lm_studio_config.get('input_prefix', '### Instruction:')} {prompt} {self.lm_studio_config.get('input_suffix', '### Response:')}"
-
+    def _query_ollama(self, prompt, clear_thinking=False):
+        """Query Ollama API for completions."""
         messages = self.history.copy()
-        messages.append({"role": "user", "content": instruction})
+        messages.append({"role": "user", "content": prompt})
 
         try:
-            completion = openai.ChatCompletion.create(
-                model=self.model,
-                messages=messages,
-                temperature=0.7,
-                stream=self.is_streaming_mode,
-            )
+            import requests
+            
+            # Ollama API endpoint
+            api_url = self.ollama_config.get('api_url', 'http://localhost:11434')
+            
+            # Prepare payload for Ollama
+            payload = {
+                "model": self.model,
+                "messages": messages,
+                "stream": self.is_streaming_mode,
+            }
 
             full_response = ""
             is_first_chunk = True
 
-            for chunk in completion:
-                if 'choices' in chunk and len(chunk['choices']) > 0:
-                    content = chunk['choices'][0]['delta'].get('content', '')
-                    if content:
-                        if is_first_chunk:
-                            if clear_thinking:
-                                print('\r' + ' ' * 30 + '\r', end="", flush=True)
-                            print("\033[1;34mCogniOrch:\033[0m ", end='', flush=True)
-                            is_first_chunk = False
+            if self.is_streaming_mode:
+                # Streaming mode
+                response = requests.post(
+                    f"{api_url}/api/chat",
+                    json=payload,
+                    stream=True,
+                    timeout=30
+                )
+                response.raise_for_status()
 
-                        print(content, end='', flush=True)
-                        full_response += content
+                for line in response.iter_lines():
+                    if line:
+                        try:
+                            chunk = json.loads(line)
+                            if 'message' in chunk and 'content' in chunk['message']:
+                                content = chunk['message']['content']
+                                if content:
+                                    if is_first_chunk:
+                                        if clear_thinking:
+                                            print('\r' + ' ' * 30 + '\r', end="", flush=True)
+                                        print("\033[1;34mCogniOrch:\033[0m ", end='', flush=True)
+                                        is_first_chunk = False
+
+                                    print(content, end='', flush=True)
+                                    full_response += content
+                                    
+                            # Check if done
+                            if chunk.get('done', False):
+                                break
+                        except json.JSONDecodeError:
+                            continue
+            else:
+                # Non-streaming mode
+                payload['stream'] = False
+                response = requests.post(
+                    f"{api_url}/api/chat",
+                    json=payload,
+                    timeout=30
+                )
+                response.raise_for_status()
+                result = response.json()
+                
+                if 'message' in result and 'content' in result['message']:
+                    full_response = result['message']['content']
+                    if clear_thinking:
+                        print('\r' + ' ' * 30 + '\r', end="", flush=True)
+                    print("\033[1;34mCogniOrch:\033[0m ", end='', flush=True)
+                    print(full_response, end='', flush=True)
 
             print()
             return full_response  # Return raw response, processing happens in query()
 
+        except requests.exceptions.ConnectionError:
+            print("Error: Cannot connect to Ollama. Make sure Ollama is running (ollama serve).")
+            return "An error occurred: Cannot connect to Ollama. Please ensure Ollama is running."
+        except requests.exceptions.Timeout:
+            print("Error: Ollama request timed out.")
+            return "An error occurred: Request timed out."
         except Exception as e:
-            print(f"Error while querying LM Studio: {e}")
-            return "An error occurred while querying LM Studio."
+            print(f"Error while querying Ollama: {e}")
+            return "An error occurred while querying Ollama."
 
     def _query_digitalocean(self, prompt, clear_thinking=False):
         self._ensure_valid_token()
@@ -411,7 +457,7 @@ Remember: You are a REAL agent that executes commands and receives REAL output. 
         if self.mode == 'digital_ocean':
             response = self._query_digitalocean(prompt, clear_thinking)
         else:
-            response = self._query_lm_studio(prompt, clear_thinking)
+            response = self._query_ollama(prompt, clear_thinking)
         
         if not response:
             return None
@@ -488,7 +534,7 @@ Be concise and focused."""
         if self.mode == 'digital_ocean':
             cot_response = self._query_digitalocean(cot_prompt, clear_thinking=False)
         else:
-            cot_response = self._query_lm_studio(cot_prompt, clear_thinking=False)
+            cot_response = self._query_ollama(cot_prompt, clear_thinking=False)
         
         if cot_response:
             self.history.append({"role": "assistant", "content": cot_response})
@@ -508,7 +554,7 @@ Do NOT include explanations, just the commands."""
         if self.mode == 'digital_ocean':
             plan_response = self._query_digitalocean(plan_prompt, clear_thinking=False)
         else:
-            plan_response = self._query_lm_studio(plan_prompt, clear_thinking=False)
+            plan_response = self._query_ollama(plan_prompt, clear_thinking=False)
         
         if not plan_response:
             print("❌ Failed to create execution plan")

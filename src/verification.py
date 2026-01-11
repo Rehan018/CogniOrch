@@ -1,23 +1,25 @@
 import re
+import os
+from typing import Tuple
 
 class CommandVerifier:
     """
-    Verifies terminal commands for safety and correctness.
+    Verifies and classifies commands for safety.
+    Identifies potentially dangerous commands and provides warnings.
     """
-    
+
+    # Patterns for dangerous commands
     DANGEROUS_PATTERNS = [
-        r"rm\s+-rf\s+/",           # Root deletion
-        r"rm\s+-rf\s+/\*",         # Root wildcard deletion
-        r":\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;", # Fork bomb
-        r"mkfs",                   # Formatting filesystems
-        r"dd\s+if=",               # Direct disk writing
-        r">\s*/dev/sd",            # Overwriting devices
-        r"chmod\s+777\s+/",        # Global permission opening
-        r"mv\s+/\w+\s+/dev/null"   # Moving system dirs to null
+        r'rm\s+-rf\s+/',
+        r'mkfs',
+        r'dd\s+if=',
+        r':\(\)\{\s*:\|:\&\s*\};:',  # Fork bomb
+        r'\>\s*/dev/sd[a-z]',
+        r'chmod\s+-R\s+777\s+/',
     ]
 
     @staticmethod
-    def verify(command: str) -> tuple[bool, str]:
+    def verify(command: str) -> Tuple[bool, str]:
         """
         Verify if a command is safe to execute.
         
