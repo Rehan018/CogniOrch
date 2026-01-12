@@ -110,6 +110,12 @@ class PersistentTerminalExecutor:
             logging.info("Persistent terminal is already running.")
             return
 
+        # Check for headless environment
+        if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+            logging.info("No display detected. Using fallback terminal.")
+            self._initialize_fallback()
+            return
+
         try:
             # Create the terminal script
             script_path = os.path.join(self.temp_dir, "cogniorch_terminal_script.sh")
@@ -182,7 +188,6 @@ done
 
             # Log the command we're about to run
             logging.info(f"Launching persistent terminal with: {term_cmd}")
-            #print_formatted_text(HTML(f"<ansiblue>Launching terminal: {term_cmd}</ansiblue>"))
 
             # Launch the terminal with nohup to ensure it stays running
             subprocess.Popen(term_cmd, shell=True,
@@ -192,10 +197,12 @@ done
 
             # Wait for terminal to initialize
             wait_count = 0
-            while not os.path.exists(self.pid_file) and wait_count < 20:
+            # Reduced wait time to 5 seconds (10 * 0.5)
+            while not os.path.exists(self.pid_file) and wait_count < 10:
                 time.sleep(0.5)
                 wait_count += 1
-                print(f"\rWaiting for terminal to initialize... {wait_count}/20", end="")
+                if wait_count % 2 == 0: # Print less frequently
+                    print(f"\rWaiting for terminal to initialize... {wait_count/2}s", end="")
 
             print()  # New line after waiting
 
@@ -203,11 +210,10 @@ done
                 with open(self.pid_file, 'r') as f:
                     pid = f.read().strip()
                 logging.info(f"Persistent terminal initialized successfully. PID: {pid}")
-                #print_formatted_text(HTML(f"<ansigreen>Persistent terminal initialized successfully. PID: {pid}</ansigreen>"))
                 self.terminal_initialized = True
             else:
-                logging.error("Failed to initialize persistent terminal.")
-                print_formatted_text(HTML("<ansired>Failed to initialize persistent terminal. Using fallback method.</ansired>"))
+                logging.warning("Failed to initialize persistent terminal window. Falling back to background process.")
+                print_formatted_text(HTML("<ansiyellow>Note: Could not open terminal window. Running in background.</ansiyellow>"))
                 self._initialize_fallback()
 
         except Exception as e:
